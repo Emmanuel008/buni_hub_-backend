@@ -1,14 +1,17 @@
 const db = require("../models");
 const bcrypt = require("bcrypt");
-const { Sequelize } = require("sequelize");
+const { Sequelize, ARRAY } = require("sequelize");
 const saltRounds = 10; // Adjust the number of salt rounds based on your security requirements
 const { Op } = require("sequelize");
 const Member = db.members;
+const SignIn = db.signins;
+const Attendance = db.attendances
+const moment = require("moment");
 
 exports.createMember = async (req, res) => {
   try {
-    const { first_name, last_name, location, email, role, phoneNumber } =
-      req.body;
+    const { first_name, last_name, email } = req.body;
+    console.log(email);
     const emailCheck = await Member.findOne({ where: { email: email } });
 
     if (emailCheck) {
@@ -26,7 +29,7 @@ exports.createMember = async (req, res) => {
     // Count the number of members registered this month
     const count = await Member.count({
       where: {
-        membershipId: {
+        membership_id: {
           [Sequelize.Op.startsWith]: `${formattedMonth}`,
         },
       },
@@ -37,24 +40,30 @@ exports.createMember = async (req, res) => {
       throw new Error("Monthly registration limit reached");
     }
 
-    // Generate the MembershipId
-    // Generate the MembershipId
+    // Generate the Membership_id
+
     const nextNumber = count + 1;
     const formattedNextNumber =
       nextNumber < 10 ? `0${nextNumber}` : `${nextNumber}`;
-    const membershipId = `${formattedMonth}${formattedNextNumber}`;
+    const membership_id = `${formattedMonth}${formattedNextNumber}`;
 
     const member = await Member.create({
       first_name,
       last_name,
       email,
-      location,
       password: hashedPassword,
-      membershipId,
-      phoneNumber,
-      role,
+      membership_id: membership_id,
     });
-    res.status(200).json(member);
+    // Fetch the updated list of all members
+    const allMembers = await Member.findAll({
+      attributes: { exclude: ["password", "updatedAt"] },
+    });
+
+    res.status(200).json({
+      message: "Member created successfully",
+      newMember: member,
+      allMembers,
+    });
   } catch (error) {
     console.log(error);
     res.status(400).json({ error: error });
@@ -64,29 +73,259 @@ exports.createMember = async (req, res) => {
 
 exports.verifyMemberDetails = async (req, res) => {
   try {
-    const { first_name, last_name, email, role, location, phoneNumber } =
-      req.body;
-
+    let newTime;
+    const { membership_id, password } = req.body;
+    console.log(req.body)
     const existingMember = await Member.findOne({
       where: {
-        [Op.and]: [
-          { first_name: first_name },
-          { last_name: last_name },
-          { email: email },
-          { role: role },
-          { location: location },
-          { phoneNumber: phoneNumber },
-        ],
+        membership_id: membership_id,
       },
     });
 
-    if (existingMember) {
-      res.status(200).json({ message: "Member details verified successfully" });
-    } else {
-      res.status(404).json({ message: "Member details not found" });
+
+    if (!existingMember) {
+      res.status(401).json({ message: "Member not found" });
+    }
+    // Validate password
+    const isPasswordValid = await bcrypt.compare(
+      password,
+      existingMember.password
+    );
+    console.log(isPasswordValid)
+    if (!isPasswordValid) {
+      return res.status(401).json({ message: "Invalid Member_id  or password" });
+    }
+    else{
+      const currentDate = new Date();
+      newTime = currentDate.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
+console.log(newTime)
+    // checking if the member is late or not late
+    const time = await SignIn.findOne();
+
+    function compareTimestamps(timestamp1, timestamp2) {
+      return timestamp1 > timestamp2;
+    }
+    const status = compareTimestamps(newTime, time.signInTime);
+    const attendance = await Attendance.create({
+      attendance_status: status,
+      membership_id: existingMember.membership_id
+    })
+    if(attendance){
+      res.status(200).json({ message: "Member verfication was succesfully" });
+    }else{
+      res.status(404).json({message: "Attendance could not be taken"})
     }
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ error: error });
   }
 };
+
+exports.getAllMember = async (req, res) => {
+  try {
+    const { page = 1 } = req.query;
+    const maxPageSize = 10;
+
+    // Fetch the total number of users in the database
+    const totalCount = await Member.count();
+
+    // Calculate the dynamic pageSize based on total users
+    const pageSize = Math.min(maxPageSize, totalCount);
+
+    // Calculate the offset based on the requested page and dynamic pageSize
+    const offset = (page - 1) * pageSize;
+    const { count, rows: members } = await Member.findAndCountAll({
+      attributes: [
+        "membership_id",
+        "first_name",
+        "last_name",
+        "email",
+        [
+          Sequelize.fn("date_format", Sequelize.col("createdAt"), "%Y-%m-%d"),
+          "createdAt",
+        ],
+      ],
+      limit: pageSize,
+      offset,
+      raw: true, // Ensure plain JSON objects are returned
+    });
+
+    const totalPages = Math.ceil(count / pageSize);
+    res.status(200).json({
+      members,
+      meta: {
+        totalUsers: count,
+        totalPages,
+        currentPage: parseInt(page),
+        pageSize: parseInt(pageSize),
+      },
+    });
+  } catch (error) {
+    res.status(400).json({message: error})
+  }
+}
+
+exports.getAllMemberAttendance = async (req, res) => {
+  try {
+    const { page =1} = req.query;
+    const maxPageSize = 10;
+
+    // Fetch today's date
+    const todayDate = moment().format("YYYY-MM-DD").split(" ")[0];
+    console.log(todayDate)
+
+    // Fetch the total number of members in the database
+    const totalCount = await Attendance.count();
+    console.log(totalCount);
+
+
+    // Calculate the dynamic pageSize based on total users
+    const pageSize = Math.min(maxPageSize, totalCount);
+    console.log(pageSize);
+
+
+    // Calculate the offset based on the requested page and dynamic pageSize
+    const offset = (page - 1) * pageSize;
+    console.log(offset);
+
+
+    // Fetch the paginated users with attendance data for today's date
+    const { count, rows: attendances } = await Attendance.findAndCountAll({
+      attributes: { exclude: ["updatedAt"] },
+      limit: pageSize,
+      offset,
+      include: [
+        {
+          model: Member,
+          required: true,
+          where: {
+            createdAt: {
+              [Op.gte]: moment(todayDate).startOf("day").toDate(), // Greater than or equal to the start of today
+              [Op.lt]: moment(todayDate).endOf("day").toDate(), // Less than the end of today
+            },
+          },
+        },
+      ],
+    });
+
+    const totalPages = Math.ceil(count / pageSize);
+
+    res.status(200).json({
+      attendances,
+      meta: {
+        totalUsers: count,
+        totalPages,
+        currentPage: parseInt(page),
+        pageSize: parseInt(pageSize),
+      },
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.getMemberAttendance = async (req, res) => {
+  try {
+    const { membership_id } = req.params;
+    const member = await Member.findOne({
+      where: {
+        membership_id,
+      },
+      include: [
+        {
+          model: Attendance,
+          attributes: ["attendance_status"],
+        },
+      ],
+    });
+
+    if (!member) {
+      return res.status(404).json({ message: "Member not found" });
+    }
+
+    res.status(200).json(member);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.deleteMember = async (req, res) => {
+  try {
+    const membership_id  = req.params.id;
+    const member = await Member.findOne({
+      where: {
+        membership_id,
+      },
+    });
+
+    if (!member) {
+      return res.status(404).json({ message: "Member not found" });
+    }
+
+    await member.destroy();
+
+    // Fetch the updated list of members after deletion
+    const remainingMembers = await Member.findAll({
+      attributes: { exclude: ["password", "updatedAt"] },
+    });
+
+    res.status(200).json({
+      message: "Member deleted successfully",
+      remainingMembers,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.updateMember = async (req, res) => {
+  try {
+    const membership_id = req.params.id;
+    const {last_name} = req.body
+    
+    const member = await Member.findOne({
+      where: {
+        membership_id,
+      },
+    });
+    if (!member) {
+      return res.status(404).json({ message: "Member not found" });
+    }
+    if(last_name.length > 1){
+      member.last_name = last_name;
+      const password = last_name.toUpperCase();
+      const hashedPassword = await bcrypt.hash(password, saltRounds);
+      member.password = hashedPassword; // Assuming uppercase of the new last name is the new password
+    }
+
+    // Update other changed fields
+    await Member.update(req.body, {where: {membership_id: membership_id}});
+
+    // Fetch the updated list of all members
+    const allMembers = await Member.findAll({
+      attributes: { exclude: ["password", "updatedAt"] },
+    });
+
+    res.status(200).json({
+      message: "Member updated successfully",
+      updatedMember: member,
+      allMembers,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.getTotalNumber = async (req,res) =>{
+  try {
+  const totalCount = await Member.count();
+    res.status(200).json(totalCount)
+  } catch (error) {
+    res.status(400).json({error: error.message})
+  }
+}
