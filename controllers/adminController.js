@@ -6,6 +6,7 @@ const saltRounds = 10; // Adjust the number of salt rounds based on your securit
 exports.createAdmim = async (req, res) => {
   try {
     const { username, password } = req.body;
+    console.log(req.body);
     // Check if a record already exists
     const existingAdmin = await Admin.findOne();
 
@@ -19,7 +20,7 @@ exports.createAdmim = async (req, res) => {
       const hashedPassword = await bcrypt.hash(password, saltRounds);
       const newAdmin = await Admin.create({
         username,
-        hashedPassword,
+        password: hashedPassword,
       });
       res.status(200).json(newAdmin);
     }
@@ -31,7 +32,7 @@ exports.createAdmim = async (req, res) => {
 exports.loginAdmin = async (req, res) => {
   try {
     const { username, password } = req.body;
-    const userCheck = await User.findOne({
+    const userCheck = await Admin.findOne({
       where: { username: username }
     });
 

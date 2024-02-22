@@ -102,7 +102,6 @@ exports.verifyMemberDetails = async (req, res) => {
         minute: "2-digit",
       });
     }
-console.log(newTime)
     // checking if the member is late or not late
     const time = await SignIn.findOne();
 
@@ -171,37 +170,40 @@ exports.getAllMember = async (req, res) => {
 
 exports.getAllMemberAttendance = async (req, res) => {
   try {
-    const { page =1} = req.query;
-    const maxPageSize = 10;
+    // const { page =1} = req.query;
+    // const maxPageSize = 10;
 
     // Fetch today's date
-    const todayDate = moment().format("YYYY-MM-DD").split(" ")[0];
-    console.log(todayDate)
+    const todayDate = moment().format("YYYY-MM-DD");
+    // console.log(moment(todayDate).startOf("day").toDate())
+    // console.log(moment(todayDate).endOf("day").toDate())
+
 
     // Fetch the total number of members in the database
-    const totalCount = await Attendance.count();
-    console.log(totalCount);
+    // const totalCount = await Attendance.count();
+    // console.log(totalCount);
 
 
     // Calculate the dynamic pageSize based on total users
-    const pageSize = Math.min(maxPageSize, totalCount);
-    console.log(pageSize);
+    // const pageSize = Math.min(maxPageSize, totalCount);
+    // console.log(pageSize);
 
 
     // Calculate the offset based on the requested page and dynamic pageSize
-    const offset = (page - 1) * pageSize;
-    console.log(offset);
+    // const offset = (page - 1) * pageSize;
+    // console.log(offset);
 
 
     // Fetch the paginated users with attendance data for today's date
-    const { count, rows: attendances } = await Attendance.findAndCountAll({
+    const attendances = await Member.findAll({
       attributes: { exclude: ["updatedAt"] },
-      limit: pageSize,
-      offset,
-      include: [
+      // limit: pageSize,
+      // offset,
+      include: 
         {
-          model: Member,
+          model: Attendance,
           required: true,
+          attributes: ["createdAt"],
           where: {
             createdAt: {
               [Op.gte]: moment(todayDate).startOf("day").toDate(), // Greater than or equal to the start of today
@@ -209,21 +211,43 @@ exports.getAllMemberAttendance = async (req, res) => {
             },
           },
         },
-      ],
+      
+    });
+    console.log(attendances)
+
+    const attendanceWithlocalTime = attendances.map(attendances =>{
+      const localCreatedAt = attendances.attendances.map(att => att.createdAt.toLocaleString( {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZoneName: 'short'
+      })
+)
+
+      return {
+        ...attendances.toJSON(),
+        time: localCreatedAt
+      };
     });
 
-    const totalPages = Math.ceil(count / pageSize);
+    
+
+    // const totalPages = Math.ceil(count / pageSize);
 
     res.status(200).json({
-      attendances,
-      meta: {
-        totalUsers: count,
-        totalPages,
-        currentPage: parseInt(page),
-        pageSize: parseInt(pageSize),
-      },
+      attendanceWithlocalTime,
+      // meta: {
+      //   totalUsers: count,
+      //   totalPages,
+      //   currentPage: parseInt(page),
+      //   pageSize: parseInt(pageSize),
+      // },
     });
   } catch (error) {
+    console.log(error)
     res.status(400).json({ error: error.message });
   }
 };
